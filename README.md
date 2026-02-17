@@ -1,6 +1,6 @@
 # x-cli
 
-A CLI for X/Twitter that talks directly to the API v2. Post tweets, search, read timelines, manage bookmarks -- all from your terminal.
+A CLI for X/Twitter that talks directly to the API v2. Post tweets, search, read timelines, and manage engagement from your terminal.
 
 Uses the same auth credentials as [x-mcp](https://github.com/INFATOSHI/x-mcp). If you already have x-mcp set up, x-cli works with zero additional config.
 
@@ -16,7 +16,7 @@ Uses the same auth credentials as [x-mcp](https://github.com/INFATOSHI/x-mcp). I
 | **Read** | `tweet get`, `tweet search`, `user timeline`, `me mentions` | `x-cli tweet search "from:elonmusk"` |
 | **Users** | `user get`, `user followers`, `user following` | `x-cli user get openai` |
 | **Engage** | `like`, `retweet` | `x-cli like <tweet-url>` |
-| **Bookmarks** | `me bookmarks`, `me bookmark`, `me unbookmark` | `x-cli me bookmarks --max 20` |
+| **Bookmarks** | `me bookmarks`, `me bookmark`, `me unbookmark` | `Currently blocked by X auth requirements (OAuth2 user context)` |
 | **Analytics** | `tweet metrics` | `x-cli tweet metrics <tweet-id>` |
 
 Accepts tweet URLs or IDs interchangeably -- paste `https://x.com/user/status/123` or just `123`.
@@ -105,6 +105,8 @@ x-cli me bookmark <id-or-url>
 x-cli me unbookmark <id-or-url>
 ```
 
+Note: X currently requires OAuth 2.0 User Context for bookmarks endpoints. This CLI's auth model is OAuth 1.0a + app bearer token, so bookmark commands are not available yet.
+
 ### Quick actions
 
 ```bash
@@ -148,6 +150,9 @@ Double-check all 5 credentials in your `.env`. No extra spaces or newlines.
 
 ### Reply fails with a permissions/restriction error
 As of Feb 2024, X restricts programmatic replies via the API. You can only reply if the original author @mentions you or quotes your post. This applies to Free, Basic, Pro, and Pay-Per-Use tiers (Enterprise is exempt). Use `tweet quote` as a workaround.
+
+### 403 "Unsupported Authentication" on bookmarks
+X's bookmarks endpoints require OAuth 2.0 User Context. x-cli currently uses OAuth 1.0a user tokens plus app bearer token, so `me bookmarks`, `me bookmark`, and `me unbookmark` cannot be used until OAuth2 user-context auth is added.
 
 ### 429 Rate Limited
 The error includes the reset timestamp. Wait until then.

@@ -40,10 +40,44 @@ class XApiClient:
             raise RuntimeError(f"Rate limited. Resets at {reset}.")
         data = resp.json()
         if not resp.is_success:
-            errors = data.get("errors", [])
-            msg = "; ".join(e.get("detail") or e.get("message", "") for e in errors) or resp.text[:500]
+            if self._is_bookmarks_oauth2_only_error(resp, data):
+                raise RuntimeError(
+                    "Bookmarks endpoints require OAuth 2.0 User Context. "
+                    "x-cli currently authenticates with OAuth 1.0a user tokens, so "
+                    "`me bookmarks`, `me bookmark`, and `me unbookmark` are not supported yet."
+                )
+            msg = self._extract_error_message(resp, data)
             raise RuntimeError(f"API error (HTTP {resp.status_code}): {msg}")
         return data
+
+    @staticmethod
+    def _extract_error_message(resp: httpx.Response, data: dict[str, Any]) -> str:
+        errors = data.get("errors", [])
+        if isinstance(errors, list):
+            details = [e.get("detail") or e.get("message", "") for e in errors if isinstance(e, dict)]
+            details = [d for d in details if d]
+            if details:
+                return "; ".join(details)
+        detail = data.get("detail")
+        if detail:
+            return str(detail)
+        title = data.get("title")
+        if title:
+            return str(title)
+        return resp.text[:500]
+
+    @staticmethod
+    def _is_bookmarks_oauth2_only_error(resp: httpx.Response, data: dict[str, Any]) -> bool:
+        if resp.status_code != 403:
+            return False
+        problem_type = str(data.get("type", ""))
+        detail = str(data.get("detail", ""))
+        path = resp.request.url.path
+        return (
+            "/bookmarks" in path
+            and "unsupported-authentication" in problem_type
+            and "OAuth 2.0 User Context" in detail
+        )
 
     def get_authenticated_user_id(self) -> str:
         if self._user_id:
@@ -175,7 +209,7 @@ class XApiClient:
         user_id = self.get_authenticated_user_id()
         return self._oauth_request("POST", f"{API_BASE}/users/{user_id}/retweets", {"tweet_id": tweet_id})
 
-    # ---- bookmarks (OAuth 1.0a -- basic tier may not support these) ----
+    # ---- bookmarks (X currently requires OAuth 2.0 User Context) ----
 
     def get_bookmarks(self, max_results: int = 10) -> dict[str, Any]:
         user_id = self.get_authenticated_user_id()

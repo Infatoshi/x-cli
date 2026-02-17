@@ -44,8 +44,9 @@ Global flags: `-j`/`--json`, `-p`/`--plain`, `-md`/`--markdown` control output m
 `XApiClient` wraps all Twitter API v2 endpoints. Key patterns:
 
 - **Read-only endpoints** (get_tweet, search, get_user, get_timeline, get_followers, get_following) use Bearer token auth via `_bearer_get()` or direct `httpx` calls with Bearer header.
-- **Write endpoints** (post_tweet, delete_tweet, like, retweet, bookmark) use OAuth 1.0a via `_oauth_request()`.
-- **Authenticated read endpoints** (get_mentions, get_bookmarks) use OAuth 1.0a because they access the authenticated user's data.
+- **Write endpoints** (post_tweet, delete_tweet, like, retweet) use OAuth 1.0a via `_oauth_request()`.
+- **Authenticated read endpoints** like `get_mentions` use OAuth 1.0a.
+- **Bookmarks endpoints** currently fail with 403 because X requires OAuth 2.0 User Context for bookmarks, while this CLI only supports OAuth 1.0a user auth + app bearer token.
 - `get_authenticated_user_id()` resolves and caches the current user's numeric ID (needed for like/retweet/bookmark/mentions endpoints).
 
 All methods return raw `dict` parsed from the API JSON response. Error handling is in `_handle()` -- raises `RuntimeError` on non-2xx or rate limit responses.
@@ -105,9 +106,9 @@ Note: `timeline`, `followers`, `following` resolve username to numeric ID automa
 | Command | Args | Flags | API method |
 |---------|------|-------|------------|
 | `mentions` | | `--max N` | `get_mentions()` |
-| `bookmarks` | | `--max N` | `get_bookmarks()` |
-| `bookmark` | `ID_OR_URL` | | `bookmark_tweet()` |
-| `unbookmark` | `ID_OR_URL` | | `unbookmark_tweet()` |
+| `bookmarks` | | `--max N` | `get_bookmarks()` (currently blocked by X OAuth2-only requirement) |
+| `bookmark` | `ID_OR_URL` | | `bookmark_tweet()` (currently blocked by X OAuth2-only requirement) |
+| `unbookmark` | `ID_OR_URL` | | `unbookmark_tweet()` (currently blocked by X OAuth2-only requirement) |
 
 ### Top-level commands
 
@@ -139,7 +140,7 @@ The Twitter API v2 requires numeric user IDs for timeline/followers/following en
 uv run pytest tests/ -v
 ```
 
-Tests cover utils (tweet ID parsing), formatters (JSON/TSV output), and auth (OAuth header generation). No live API calls in tests.
+Tests cover utils (tweet ID parsing), formatters (JSON/TSV output), auth (OAuth header generation), and API error handling (including bookmarks OAuth2-required messaging). No live API calls in tests.
 
 ---
 
@@ -148,6 +149,7 @@ Tests cover utils (tweet ID parsing), formatters (JSON/TSV output), and auth (OA
 | Error | Cause | Fix |
 |-------|-------|-----|
 | 403 "oauth1-permissions" | Access Token is Read-only | Enable "Read and write" in app settings, regenerate Access Token |
+| 403 "Unsupported Authentication" on bookmarks | Bookmarks endpoints are OAuth2 user-context only | Not fixable with current auth model; implement OAuth2 user-context flow |
 | 401 Unauthorized | Bad credentials | Verify all 5 values in `.env` |
 | Reply fails / restriction error | X restricts programmatic replies (Feb 2024) | Can only reply if original author @mentioned you or quoted your post. Use `tweet quote` instead |
 | 429 Rate Limited | Too many requests | Error includes reset timestamp |
