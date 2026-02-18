@@ -46,6 +46,39 @@ class State:
 pass_state = click.make_pass_decorator(State)
 
 
+def _call_and_output(state: State, title: str, fn, *args, **kwargs) -> None:
+    data = fn(*args, **kwargs)
+    state.output(data, title)
+
+
+def _call_with_tweet_id(state: State, id_or_url: str, title: str, fn) -> None:
+    tid = parse_tweet_id(id_or_url)
+    _call_and_output(state, title, fn, tid)
+
+
+def _resolve_user_identity(state: State, username: str) -> tuple[str, str]:
+    uname = strip_at(username)
+    user_data = state.client.get_user(uname)
+    return uname, user_data["data"]["id"]
+
+
+def _oauth2_status_lines(access: str | None, refresh: str | None, expires_raw: str | None) -> list[str]:
+    if not access:
+        return ["OAuth2: not logged in"]
+    lines = ["OAuth2: logged in", f"Refresh token: {'present' if refresh else 'missing'}"]
+    if not expires_raw:
+        lines.append("Access token expiry: unknown")
+        return lines
+    try:
+        expires_at = int(expires_raw)
+    except ValueError:
+        lines.append("Access token expiry: invalid value in X_OAUTH2_EXPIRES_AT")
+        return lines
+    remaining = expires_at - int(time.time())
+    lines.append("Access token expiry: expired" if remaining <= 0 else f"Access token expiry: in {remaining // 60} minutes")
+    return lines
+
+
 @click.group()
 @click.option("--json", "-j", "fmt", flag_value="json", help="JSON output")
 @click.option("--plain", "-p", "fmt", flag_value="plain", help="TSV output for piping")
@@ -140,24 +173,8 @@ def auth_status():
     access = os.environ.get("X_OAUTH2_ACCESS_TOKEN")
     refresh = os.environ.get("X_OAUTH2_REFRESH_TOKEN")
     expires_raw = os.environ.get("X_OAUTH2_EXPIRES_AT")
-    if not access:
-        click.echo("OAuth2: not logged in")
-        return
-    click.echo("OAuth2: logged in")
-    click.echo(f"Refresh token: {'present' if refresh else 'missing'}")
-    if not expires_raw:
-        click.echo("Access token expiry: unknown")
-        return
-    try:
-        expires_at = int(expires_raw)
-    except ValueError:
-        click.echo("Access token expiry: invalid value in X_OAUTH2_EXPIRES_AT")
-        return
-    remaining = expires_at - int(time.time())
-    if remaining <= 0:
-        click.echo("Access token expiry: expired")
-    else:
-        click.echo(f"Access token expiry: in {remaining // 60} minutes")
+    for line in _oauth2_status_lines(access, refresh, expires_raw):
+        click.echo(line)
 
 
 # ============================================================
@@ -187,8 +204,7 @@ def tweet_post(state, text, poll, poll_duration):
 def tweet_get(state, id_or_url):
     """Fetch a tweet by ID or URL."""
     tid = parse_tweet_id(id_or_url)
-    data = state.client.get_tweet(tid)
-    state.output(data, f"Tweet {tid}")
+    _call_and_output(state, f"Tweet {tid}", state.client.get_tweet, tid)
 
 
 @tweet.command("delete")
@@ -196,9 +212,7 @@ def tweet_get(state, id_or_url):
 @pass_state
 def tweet_delete(state, id_or_url):
     """Delete a tweet."""
-    tid = parse_tweet_id(id_or_url)
-    data = state.client.delete_tweet(tid)
-    state.output(data, "Deleted")
+    _call_with_tweet_id(state, id_or_url, "Deleted", state.client.delete_tweet)
 
 
 @tweet.command("reply")
@@ -248,8 +262,7 @@ def tweet_search(state, query, max_results):
 def tweet_metrics(state, id_or_url):
     """Get tweet engagement metrics."""
     tid = parse_tweet_id(id_or_url)
-    data = state.client.get_tweet_metrics(tid)
-    state.output(data, f"Metrics {tid}")
+    _call_and_output(state, f"Metrics {tid}", state.client.get_tweet_metrics, tid)
 
 
 # ============================================================
@@ -276,11 +289,8 @@ def user_get(state, username):
 @pass_state
 def user_timeline(state, username, max_results):
     """Fetch a user's recent tweets."""
-    uname = strip_at(username)
-    user_data = state.client.get_user(uname)
-    uid = user_data["data"]["id"]
-    data = state.client.get_timeline(uid, max_results)
-    state.output(data, f"@{uname} timeline")
+    uname, uid = _resolve_user_identity(state, username)
+    _call_and_output(state, f"@{uname} timeline", state.client.get_timeline, uid, max_results)
 
 
 @user.command("followers")
@@ -289,11 +299,8 @@ def user_timeline(state, username, max_results):
 @pass_state
 def user_followers(state, username, max_results):
     """List a user's followers."""
-    uname = strip_at(username)
-    user_data = state.client.get_user(uname)
-    uid = user_data["data"]["id"]
-    data = state.client.get_followers(uid, max_results)
-    state.output(data, f"@{uname} followers")
+    uname, uid = _resolve_user_identity(state, username)
+    _call_and_output(state, f"@{uname} followers", state.client.get_followers, uid, max_results)
 
 
 @user.command("following")
@@ -302,11 +309,8 @@ def user_followers(state, username, max_results):
 @pass_state
 def user_following(state, username, max_results):
     """List who a user follows."""
-    uname = strip_at(username)
-    user_data = state.client.get_user(uname)
-    uid = user_data["data"]["id"]
-    data = state.client.get_following(uid, max_results)
-    state.output(data, f"@{uname} following")
+    uname, uid = _resolve_user_identity(state, username)
+    _call_and_output(state, f"@{uname} following", state.client.get_following, uid, max_results)
 
 
 # ============================================================
@@ -341,9 +345,7 @@ def me_bookmarks(state, max_results):
 @pass_state
 def me_bookmark(state, id_or_url):
     """Bookmark a tweet."""
-    tid = parse_tweet_id(id_or_url)
-    data = state.client.bookmark_tweet(tid)
-    state.output(data, "Bookmarked")
+    _call_with_tweet_id(state, id_or_url, "Bookmarked", state.client.bookmark_tweet)
 
 
 @me.command("unbookmark")
@@ -351,9 +353,7 @@ def me_bookmark(state, id_or_url):
 @pass_state
 def me_unbookmark(state, id_or_url):
     """Remove a bookmark."""
-    tid = parse_tweet_id(id_or_url)
-    data = state.client.unbookmark_tweet(tid)
-    state.output(data, "Unbookmarked")
+    _call_with_tweet_id(state, id_or_url, "Unbookmarked", state.client.unbookmark_tweet)
 
 
 # ============================================================
@@ -365,9 +365,7 @@ def me_unbookmark(state, id_or_url):
 @pass_state
 def like(state, id_or_url):
     """Like a tweet."""
-    tid = parse_tweet_id(id_or_url)
-    data = state.client.like_tweet(tid)
-    state.output(data, "Liked")
+    _call_with_tweet_id(state, id_or_url, "Liked", state.client.like_tweet)
 
 
 @cli.command("retweet")
@@ -375,9 +373,7 @@ def like(state, id_or_url):
 @pass_state
 def retweet(state, id_or_url):
     """Retweet a tweet."""
-    tid = parse_tweet_id(id_or_url)
-    data = state.client.retweet(tid)
-    state.output(data, "Retweeted")
+    _call_with_tweet_id(state, id_or_url, "Retweeted", state.client.retweet)
 
 
 def main():

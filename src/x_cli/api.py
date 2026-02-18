@@ -24,8 +24,30 @@ class XApiClient:
 
     # ---- internal ----
 
+    def _request(
+        self,
+        method: str,
+        url: str,
+        *,
+        headers: dict[str, str],
+        params: dict[str, str] | None = None,
+        json_body: dict | None = None,
+    ) -> httpx.Response:
+        return self._http.request(
+            method,
+            url,
+            headers=headers,
+            params=params,
+            json=json_body if json_body is not None else None,
+        )
+
+    @staticmethod
+    def _query_url(base_url: str, params: dict[str, str]) -> str:
+        qs = "&".join(f"{k}={v}" for k, v in params.items())
+        return f"{base_url}?{qs}" if qs else base_url
+
     def _bearer_get(self, url: str) -> dict[str, Any]:
-        resp = self._http.get(url, headers={"Authorization": f"Bearer {self.creds.bearer_token}"})
+        resp = self._request("GET", url, headers={"Authorization": f"Bearer {self.creds.bearer_token}"})
         return self._handle(resp)
 
     def _oauth_request(self, method: str, url: str, json_body: dict | None = None) -> dict[str, Any]:
@@ -33,7 +55,7 @@ class XApiClient:
         headers: dict[str, str] = {"Authorization": auth_header}
         if json_body is not None:
             headers["Content-Type"] = "application/json"
-        resp = self._http.request(method, url, headers=headers, json=json_body if json_body else None)
+        resp = self._request(method, url, headers=headers, json_body=json_body)
         return self._handle(resp)
 
     def _oauth2_user_request(
@@ -48,7 +70,7 @@ class XApiClient:
         headers: dict[str, str] = {"Authorization": f"Bearer {self.creds.oauth2_access_token}"}
         if json_body is not None:
             headers["Content-Type"] = "application/json"
-        resp = self._http.request(method, url, headers=headers, json=json_body if json_body else None)
+        resp = self._request(method, url, headers=headers, json_body=json_body)
         if resp.status_code == 401 and retry_on_401:
             self._refresh_oauth2_access_token()
             return self._oauth2_user_request(method, url, json_body, retry_on_401=False)
@@ -147,6 +169,11 @@ class XApiClient:
         self._oauth2_user_id = data["data"]["id"]
         return self._oauth2_user_id
 
+    def _get_user_id(self, *, oauth2: bool = False) -> str:
+        if oauth2:
+            return self.get_authenticated_user_id_oauth2()
+        return self.get_authenticated_user_id()
+
     # ---- tweets ----
 
     def post_tweet(
@@ -178,8 +205,7 @@ class XApiClient:
             "user.fields": "name,username,verified,profile_image_url,public_metrics",
             "media.fields": "url,preview_image_url,type,width,height,alt_text",
         }
-        qs = "&".join(f"{k}={v}" for k, v in params.items())
-        return self._bearer_get(f"{API_BASE}/tweets/{tweet_id}?{qs}")
+        return self._bearer_get(self._query_url(f"{API_BASE}/tweets/{tweet_id}", params))
 
     def search_tweets(self, query: str, max_results: int = 10) -> dict[str, Any]:
         max_results = max(10, min(max_results, 100))
@@ -192,18 +218,32 @@ class XApiClient:
             "media.fields": "url,preview_image_url,type",
         }
         url = f"{API_BASE}/tweets/search/recent"
-        resp = self._http.get(url, params=params, headers={"Authorization": f"Bearer {self.creds.bearer_token}"})
+        resp = self._request(
+            "GET",
+            url,
+            headers={"Authorization": f"Bearer {self.creds.bearer_token}"},
+            params=params,
+        )
         return self._handle(resp)
 
     def get_tweet_metrics(self, tweet_id: str) -> dict[str, Any]:
-        params = "tweet.fields=public_metrics,non_public_metrics,organic_metrics"
-        return self._oauth_request("GET", f"{API_BASE}/tweets/{tweet_id}?{params}")
+        return self._oauth_request(
+            "GET",
+            self._query_url(
+                f"{API_BASE}/tweets/{tweet_id}",
+                {"tweet.fields": "public_metrics,non_public_metrics,organic_metrics"},
+            ),
+        )
 
     # ---- users ----
 
     def get_user(self, username: str) -> dict[str, Any]:
-        fields = "user.fields=created_at,description,public_metrics,verified,profile_image_url,url,location,pinned_tweet_id"
-        return self._bearer_get(f"{API_BASE}/users/by/username/{username}?{fields}")
+        return self._bearer_get(
+            self._query_url(
+                f"{API_BASE}/users/by/username/{username}",
+                {"user.fields": "created_at,description,public_metrics,verified,profile_image_url,url,location,pinned_tweet_id"},
+            )
+        )
 
     def get_timeline(self, user_id: str, max_results: int = 10) -> dict[str, Any]:
         max_results = max(5, min(max_results, 100))
@@ -214,10 +254,11 @@ class XApiClient:
             "user.fields": "name,username,verified",
             "media.fields": "url,preview_image_url,type",
         }
-        resp = self._http.get(
+        resp = self._request(
+            "GET",
             f"{API_BASE}/users/{user_id}/tweets",
-            params=params,
             headers={"Authorization": f"Bearer {self.creds.bearer_token}"},
+            params=params,
         )
         return self._handle(resp)
 
@@ -227,10 +268,11 @@ class XApiClient:
             "max_results": str(max_results),
             "user.fields": "created_at,description,public_metrics,verified,profile_image_url",
         }
-        resp = self._http.get(
+        resp = self._request(
+            "GET",
             f"{API_BASE}/users/{user_id}/followers",
-            params=params,
             headers={"Authorization": f"Bearer {self.creds.bearer_token}"},
+            params=params,
         )
         return self._handle(resp)
 
@@ -240,15 +282,16 @@ class XApiClient:
             "max_results": str(max_results),
             "user.fields": "created_at,description,public_metrics,verified,profile_image_url",
         }
-        resp = self._http.get(
+        resp = self._request(
+            "GET",
             f"{API_BASE}/users/{user_id}/following",
-            params=params,
             headers={"Authorization": f"Bearer {self.creds.bearer_token}"},
+            params=params,
         )
         return self._handle(resp)
 
     def get_mentions(self, max_results: int = 10) -> dict[str, Any]:
-        user_id = self.get_authenticated_user_id()
+        user_id = self._get_user_id()
         max_results = max(5, min(max_results, 100))
         params = {
             "max_results": str(max_results),
@@ -256,24 +299,23 @@ class XApiClient:
             "expansions": "author_id",
             "user.fields": "name,username,verified",
         }
-        qs = "&".join(f"{k}={v}" for k, v in params.items())
-        url = f"{API_BASE}/users/{user_id}/mentions?{qs}"
+        url = self._query_url(f"{API_BASE}/users/{user_id}/mentions", params)
         return self._oauth_request("GET", url)
 
     # ---- engagement ----
 
     def like_tweet(self, tweet_id: str) -> dict[str, Any]:
-        user_id = self.get_authenticated_user_id()
+        user_id = self._get_user_id()
         return self._oauth_request("POST", f"{API_BASE}/users/{user_id}/likes", {"tweet_id": tweet_id})
 
     def retweet(self, tweet_id: str) -> dict[str, Any]:
-        user_id = self.get_authenticated_user_id()
+        user_id = self._get_user_id()
         return self._oauth_request("POST", f"{API_BASE}/users/{user_id}/retweets", {"tweet_id": tweet_id})
 
     # ---- bookmarks (OAuth 2.0 User Context) ----
 
     def get_bookmarks(self, max_results: int = 10) -> dict[str, Any]:
-        user_id = self.get_authenticated_user_id_oauth2()
+        user_id = self._get_user_id(oauth2=True)
         max_results = max(1, min(max_results, 100))
         params = {
             "max_results": str(max_results),
@@ -282,14 +324,13 @@ class XApiClient:
             "user.fields": "name,username,verified,profile_image_url",
             "media.fields": "url,preview_image_url,type",
         }
-        qs = "&".join(f"{k}={v}" for k, v in params.items())
-        url = f"{API_BASE}/users/{user_id}/bookmarks?{qs}"
+        url = self._query_url(f"{API_BASE}/users/{user_id}/bookmarks", params)
         return self._oauth2_user_request("GET", url)
 
     def bookmark_tweet(self, tweet_id: str) -> dict[str, Any]:
-        user_id = self.get_authenticated_user_id_oauth2()
+        user_id = self._get_user_id(oauth2=True)
         return self._oauth2_user_request("POST", f"{API_BASE}/users/{user_id}/bookmarks", {"tweet_id": tweet_id})
 
     def unbookmark_tweet(self, tweet_id: str) -> dict[str, Any]:
-        user_id = self.get_authenticated_user_id_oauth2()
+        user_id = self._get_user_id(oauth2=True)
         return self._oauth2_user_request("DELETE", f"{API_BASE}/users/{user_id}/bookmarks/{tweet_id}")

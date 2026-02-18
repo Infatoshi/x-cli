@@ -150,35 +150,47 @@ def ensure_env_file(path: Path) -> None:
 
 def migrate_legacy_oauth2_tokens(config_env_path: Path, auth2_env_path: Path) -> None:
     """Move mutable OAuth2 token keys from .env to .env.auth2."""
-    if not config_env_path.exists():
-        return
-
-    config_values = dotenv_values(config_env_path)
-    legacy_values = {
-        key: config_values.get(key)
-        for key in OAUTH2_ENV_KEYS
-        if key in config_values
-    }
+    legacy_values = _read_legacy_oauth2_values(config_env_path)
     if not legacy_values:
         return
 
     try:
-        auth2_values = dotenv_values(auth2_env_path) if auth2_env_path.exists() else {}
-        ensure_env_file(auth2_env_path)
-        for key, value in legacy_values.items():
-            if auth2_values.get(key):
-                continue
-            if value:
-                set_key(str(auth2_env_path), key, str(value), quote_mode="never")
-
-        merged_auth2 = dotenv_values(auth2_env_path)
-        for key, value in legacy_values.items():
-            # Remove from .env once value exists in .env.auth2 (or was empty in .env).
-            if merged_auth2.get(key) or not value:
-                unset_key(str(config_env_path), key, quote_mode="never")
+        merged_auth2 = _write_missing_auth2_values(auth2_env_path, legacy_values)
+        _remove_migrated_legacy_values(config_env_path, legacy_values, merged_auth2)
     except OSError:
         # Best-effort migration: keep legacy values in .env if auth2 file is not writable.
         return
+
+
+def _read_legacy_oauth2_values(config_env_path: Path) -> dict[str, str | None]:
+    if not config_env_path.exists():
+        return {}
+    config_values = dotenv_values(config_env_path)
+    return {key: config_values.get(key) for key in OAUTH2_ENV_KEYS if key in config_values}
+
+
+def _write_missing_auth2_values(
+    auth2_env_path: Path,
+    legacy_values: dict[str, str | None],
+) -> dict[str, str | None]:
+    auth2_values = dotenv_values(auth2_env_path) if auth2_env_path.exists() else {}
+    ensure_env_file(auth2_env_path)
+    for key, value in legacy_values.items():
+        if auth2_values.get(key) or not value:
+            continue
+        set_key(str(auth2_env_path), key, str(value), quote_mode="never")
+    return dotenv_values(auth2_env_path)
+
+
+def _remove_migrated_legacy_values(
+    config_env_path: Path,
+    legacy_values: dict[str, str | None],
+    merged_auth2: dict[str, str | None],
+) -> None:
+    for key, value in legacy_values.items():
+        # Remove from .env once value exists in .env.auth2 (or was empty in .env).
+        if merged_auth2.get(key) or not value:
+            unset_key(str(config_env_path), key, quote_mode="never")
 
 
 def persist_oauth2_tokens(
