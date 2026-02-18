@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from dotenv import set_key, unset_key
+from dotenv import dotenv_values, set_key, unset_key
 
 AUTH_URL = "https://twitter.com/i/oauth2/authorize"
 TOKEN_URL = "https://api.x.com/2/oauth2/token"
@@ -146,6 +146,39 @@ def ensure_env_file(path: Path) -> None:
         path.touch(mode=0o600)
     else:
         path.chmod(0o600)
+
+
+def migrate_legacy_oauth2_tokens(config_env_path: Path, auth2_env_path: Path) -> None:
+    """Move mutable OAuth2 token keys from .env to .env.auth2."""
+    if not config_env_path.exists():
+        return
+
+    config_values = dotenv_values(config_env_path)
+    legacy_values = {
+        key: config_values.get(key)
+        for key in OAUTH2_ENV_KEYS
+        if key in config_values
+    }
+    if not legacy_values:
+        return
+
+    try:
+        auth2_values = dotenv_values(auth2_env_path) if auth2_env_path.exists() else {}
+        ensure_env_file(auth2_env_path)
+        for key, value in legacy_values.items():
+            if auth2_values.get(key):
+                continue
+            if value:
+                set_key(str(auth2_env_path), key, str(value), quote_mode="never")
+
+        merged_auth2 = dotenv_values(auth2_env_path)
+        for key, value in legacy_values.items():
+            # Remove from .env once value exists in .env.auth2 (or was empty in .env).
+            if merged_auth2.get(key) or not value:
+                unset_key(str(config_env_path), key, quote_mode="never")
+    except OSError:
+        # Best-effort migration: keep legacy values in .env if auth2 file is not writable.
+        return
 
 
 def persist_oauth2_tokens(

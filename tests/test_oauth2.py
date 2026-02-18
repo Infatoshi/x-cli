@@ -14,6 +14,7 @@ from x_cli.oauth2 import (
     extract_code_from_redirect_url,
     generate_code_challenge,
     generate_code_verifier,
+    migrate_legacy_oauth2_tokens,
     refresh_access_token,
     persist_oauth2_tokens,
 )
@@ -136,3 +137,53 @@ def test_refresh_access_token_uses_basic_header_when_secret_present():
             refresh_token="r1",
         )
     assert data["access_token"] == "a2"
+
+
+def test_migrate_legacy_oauth2_tokens_moves_mutable_keys(tmp_path: Path):
+    config_env = tmp_path / ".env"
+    auth2_env = tmp_path / ".env.auth2"
+    config_env.write_text(
+        "X_API_KEY=static\n"
+        "X_OAUTH2_ACCESS_TOKEN=old-access\n"
+        "X_OAUTH2_REFRESH_TOKEN=old-refresh\n"
+        "X_OAUTH2_EXPIRES_AT=1234\n"
+    )
+
+    migrate_legacy_oauth2_tokens(config_env, auth2_env)
+
+    config_text = config_env.read_text()
+    auth2_text = auth2_env.read_text()
+    assert "X_API_KEY=static" in config_text
+    assert "X_OAUTH2_ACCESS_TOKEN" not in config_text
+    assert "X_OAUTH2_REFRESH_TOKEN" not in config_text
+    assert "X_OAUTH2_EXPIRES_AT" not in config_text
+    assert "X_OAUTH2_ACCESS_TOKEN=old-access" in auth2_text
+    assert "X_OAUTH2_REFRESH_TOKEN=old-refresh" in auth2_text
+    assert "X_OAUTH2_EXPIRES_AT=1234" in auth2_text
+
+
+def test_migrate_legacy_oauth2_tokens_keeps_auth2_precedence(tmp_path: Path):
+    config_env = tmp_path / ".env"
+    auth2_env = tmp_path / ".env.auth2"
+    config_env.write_text("X_OAUTH2_ACCESS_TOKEN=old-access\n")
+    auth2_env.write_text("X_OAUTH2_ACCESS_TOKEN=new-access\n")
+
+    migrate_legacy_oauth2_tokens(config_env, auth2_env)
+
+    assert "X_OAUTH2_ACCESS_TOKEN=new-access" in auth2_env.read_text()
+    assert "X_OAUTH2_ACCESS_TOKEN" not in config_env.read_text()
+
+
+def test_migrate_legacy_oauth2_tokens_best_effort_on_unwritable_auth2(monkeypatch, tmp_path: Path):
+    config_env = tmp_path / ".env"
+    auth2_env = tmp_path / ".env.auth2"
+    config_env.write_text("X_OAUTH2_ACCESS_TOKEN=old-access\n")
+
+    def fail_ensure(_: Path):
+        raise PermissionError("no write access")
+
+    monkeypatch.setattr("x_cli.oauth2.ensure_env_file", fail_ensure)
+    migrate_legacy_oauth2_tokens(config_env, auth2_env)
+
+    # Legacy token remains in .env when migration cannot write destination.
+    assert "X_OAUTH2_ACCESS_TOKEN=old-access" in config_env.read_text()

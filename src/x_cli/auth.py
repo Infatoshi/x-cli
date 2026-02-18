@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
+from .oauth2 import migrate_legacy_oauth2_tokens
 
 
 @dataclass
@@ -33,12 +34,20 @@ def get_config_env_path() -> Path:
     return Path.home() / ".config" / "x-cli" / ".env"
 
 
+def get_config_auth2_env_path() -> Path:
+    return Path.home() / ".config" / "x-cli" / ".env.auth2"
+
+
 def load_env_files() -> None:
-    """Load ~/.config/x-cli/.env and cwd .env into process env."""
+    """Load env files with auth2 token precedence over static config."""
     config_env = get_config_env_path()
     if config_env.exists():
         load_dotenv(config_env)
     load_dotenv()
+    auth2_env = get_config_auth2_env_path()
+    migrate_legacy_oauth2_tokens(config_env, auth2_env)
+    if auth2_env.exists():
+        load_dotenv(auth2_env, override=True)
 
 
 def load_credentials() -> Credentials:

@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from .auth import Credentials, generate_oauth_header, get_config_env_path
+from .auth import Credentials, generate_oauth_header, get_config_auth2_env_path
 from .oauth2 import expires_at_from_expires_in, persist_oauth2_tokens, refresh_access_token, token_expired
 
 API_BASE = "https://api.x.com/2"
@@ -127,7 +127,7 @@ class XApiClient:
         self.creds.oauth2_expires_at = expires_at
 
         persist_oauth2_tokens(
-            get_config_env_path(),
+            get_config_auth2_env_path(),
             access_token=access_token,
             refresh_token=self.creds.oauth2_refresh_token,
             expires_at=expires_at,

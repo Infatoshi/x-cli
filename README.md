@@ -76,6 +76,19 @@ X_OAUTH2_CLIENT_SECRET=your_oauth2_client_secret  # optional, required by some X
 
 x-cli also checks for a `.env` in the current directory.
 
+Mutable OAuth2 token values are stored separately in:
+
+```bash
+~/.config/x-cli/.env.auth2
+```
+
+Managed keys:
+- `X_OAUTH2_ACCESS_TOKEN`
+- `X_OAUTH2_REFRESH_TOKEN`
+- `X_OAUTH2_EXPIRES_AT`
+
+If these keys already exist in `~/.config/x-cli/.env`, x-cli auto-migrates them to `.env.auth2`.
+
 ### OAuth2 login for bookmarks
 
 Bookmarks endpoints require OAuth 2.0 User Context. Run:
@@ -92,6 +105,7 @@ x-cli auth login
    - `X_OAUTH2_ACCESS_TOKEN`
    - `X_OAUTH2_REFRESH_TOKEN`
    - `X_OAUTH2_EXPIRES_AT`
+   in `~/.config/x-cli/.env.auth2`
 
 You can check or clear saved OAuth2 tokens:
 
@@ -203,7 +217,7 @@ Your refresh token may be expired/revoked. Run `x-cli auth login` again to refre
 The error includes the reset timestamp. Wait until then.
 
 ### "Missing env var" on startup
-x-cli looks for credentials in `~/.config/x-cli/.env`, then the current directory's `.env`, then environment variables. Make sure at least one source has all 5 values.
+x-cli loads static credentials from `~/.config/x-cli/.env` and current `.env`, then overlays mutable OAuth2 token keys from `~/.config/x-cli/.env.auth2`.
 
 ---
 

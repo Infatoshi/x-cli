@@ -9,7 +9,7 @@ import click
 import httpx
 
 from .api import XApiClient
-from .auth import get_config_env_path, load_credentials, load_env_files
+from .auth import get_config_auth2_env_path, load_credentials, load_env_files
 from .formatters import format_output
 from .oauth2 import (
     DEFAULT_REDIRECT_URI,
@@ -114,7 +114,7 @@ def auth_login():
     refresh_token = token_data.get("refresh_token")
     expires_at = expires_at_from_expires_in(token_data.get("expires_in"))
     persist_oauth2_tokens(
-        get_config_env_path(),
+        get_config_auth2_env_path(),
         access_token=access_token,
         refresh_token=str(refresh_token) if refresh_token else None,
         expires_at=expires_at,
@@ -129,8 +129,8 @@ def auth_login():
 @auth.command("logout")
 def auth_logout():
     """Remove stored OAuth2 tokens."""
-    clear_oauth2_tokens(get_config_env_path())
-    click.echo("Removed OAuth2 tokens from ~/.config/x-cli/.env")
+    clear_oauth2_tokens(get_config_auth2_env_path())
+    click.echo("Removed OAuth2 tokens from ~/.config/x-cli/.env.auth2")
 
 
 @auth.command("status")

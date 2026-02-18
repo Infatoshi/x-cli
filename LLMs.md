@@ -13,7 +13,7 @@ x-cli is a Python CLI that talks directly to the Twitter/X API v2. It uses:
 
 No third-party auth frameworks are used; OAuth signing/challenge logic is implemented in project code.
 
-It shares the same credentials as x-mcp (the MCP server counterpart). If a user already has x-mcp configured, they can symlink its `.env` to `~/.config/x-cli/.env`.
+It shares static credentials with x-mcp via `~/.config/x-cli/.env`. Mutable OAuth2 token keys are stored in `~/.config/x-cli/.env.auth2`.
 
 ---
 
@@ -65,7 +65,7 @@ All methods return raw `dict` parsed from the API JSON response. Error handling 
 
 Two responsibilities:
 
-1. **`load_credentials()`** -- Loads required OAuth1/app vars plus optional OAuth2 vars from `~/.config/x-cli/.env` and current directory `.env`.
+1. **`load_credentials()`** -- Loads static vars from `~/.config/x-cli/.env` and current directory `.env`, then overlays mutable OAuth2 token vars from `~/.config/x-cli/.env.auth2`.
 2. **`generate_oauth_header()`** -- Builds an OAuth 1.0a `Authorization` header using HMAC-SHA1. Follows the standard OAuth signature base string construction: percent-encode params, sort, concatenate with `&`, sign with consumer secret + token secret.
 
 Query string parameters from the URL are included in the signature base string (required by OAuth spec).
@@ -76,7 +76,8 @@ Query string parameters from the URL are included in the signature base string (
 - Builds browser authorization URL.
 - Parses redirected URL for code/state validation (user must paste full browser address-bar URL).
 - Exchanges authorization code for tokens and refreshes access token.
-- Persists/removes OAuth2 token env vars in `~/.config/x-cli/.env`.
+- Persists/removes OAuth2 token env vars in `~/.config/x-cli/.env.auth2`.
+- Auto-migrates legacy token keys from `~/.config/x-cli/.env` to `.env.auth2`.
 
 ### `formatters.py` -- Output
 
@@ -183,5 +184,5 @@ Tests cover utils, formatters, OAuth1 signing, OAuth2 helpers, API auth routing,
 | 401 Unauthorized | Bad credentials | Verify all 5 values in `.env` |
 | Reply fails / restriction error | X restricts programmatic replies (Feb 2024) | Can only reply if original author @mentioned you or quoted your post. Use `tweet quote` instead |
 | 429 Rate Limited | Too many requests | Error includes reset timestamp |
-| "Missing env var" | `.env` not found or incomplete | Check `~/.config/x-cli/.env` or set env vars directly |
+| "Missing env var" | Static `.env` missing required keys | Check `~/.config/x-cli/.env` (and optional cwd `.env`) |
 | `RuntimeError: API error` | Twitter API returned an error | Check the error message for details (usually permissions or invalid IDs) |

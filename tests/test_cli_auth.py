@@ -57,13 +57,13 @@ def test_auth_login_success(monkeypatch):
         saved["expires_at"] = expires_at
 
     monkeypatch.setattr("x_cli.cli.persist_oauth2_tokens", fake_persist)
-    monkeypatch.setattr("x_cli.cli.get_config_env_path", lambda: Path("/tmp/fake.env"))
+    monkeypatch.setattr("x_cli.cli.get_config_auth2_env_path", lambda: Path("/tmp/fake.env.auth2"))
 
     runner = CliRunner()
     result = runner.invoke(cli, ["auth", "login"], input="https://example.com/oauth/callback?code=x&state=y\n")
     assert result.exit_code == 0
     assert "OAuth2 login successful" in result.output
-    assert saved["path"] == Path("/tmp/fake.env")
+    assert saved["path"] == Path("/tmp/fake.env.auth2")
     assert saved["access_token"] == "a1"
     assert saved["refresh_token"] == "r1"
     assert isinstance(saved["expires_at"], int)
@@ -97,7 +97,7 @@ def test_auth_logout_clears_tokens(monkeypatch):
 
     def fake_clear(path):
         cleared["called"] = True
-        assert str(path).endswith("/.config/x-cli/.env")
+        assert str(path).endswith("/.config/x-cli/.env.auth2")
 
     monkeypatch.setattr("x_cli.cli.clear_oauth2_tokens", fake_clear)
 
