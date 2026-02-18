@@ -2,12 +2,27 @@
 
 from __future__ import annotations
 
+import os
+import time
 
 import click
+import httpx
 
 from .api import XApiClient
-from .auth import load_credentials
+from .auth import get_config_env_path, load_credentials, load_env_files
 from .formatters import format_output
+from .oauth2 import (
+    DEFAULT_REDIRECT_URI,
+    build_authorization_url,
+    clear_oauth2_tokens,
+    exchange_code_for_token,
+    expires_at_from_expires_in,
+    extract_code_from_redirect_url,
+    generate_code_challenge,
+    generate_code_verifier,
+    generate_state,
+    persist_oauth2_tokens,
+)
 from .utils import parse_tweet_id, strip_at
 
 
@@ -41,6 +56,108 @@ def cli(ctx, fmt, verbose):
     """x-cli: CLI for X/Twitter API v2."""
     ctx.ensure_object(dict)
     ctx.obj = State(fmt or "human", verbose=verbose)
+
+
+# ============================================================
+# auth
+# ============================================================
+
+@cli.group()
+def auth():
+    """OAuth2 authentication helpers."""
+
+
+@auth.command("login")
+def auth_login():
+    """Run OAuth2 PKCE login for bookmarks endpoints."""
+    load_env_files()
+    client_id = os.environ.get("X_OAUTH2_CLIENT_ID")
+    if not client_id:
+        raise click.ClickException("Missing env var X_OAUTH2_CLIENT_ID.")
+    client_secret = os.environ.get("X_OAUTH2_CLIENT_SECRET")
+
+    redirect_uri = os.environ.get("X_OAUTH2_REDIRECT_URI", DEFAULT_REDIRECT_URI)
+    code_verifier = generate_code_verifier()
+    state = generate_state()
+    auth_url = build_authorization_url(
+        client_id=client_id,
+        redirect_uri=redirect_uri,
+        state=state,
+        code_challenge=generate_code_challenge(code_verifier),
+    )
+
+    click.echo("Open this URL in your browser and approve access:")
+    click.echo(auth_url)
+    click.echo("")
+    click.echo(f"Use a callback URL configured in your X app (current: {redirect_uri}).")
+    click.echo("Recommended callback URL: https://example.com/oauth/callback")
+    redirected_url = click.prompt("Paste the full redirected URL from your browser address bar")
+
+    try:
+        code = extract_code_from_redirect_url(redirected_url, state)
+        with httpx.Client(timeout=30.0) as http:
+            token_data = exchange_code_for_token(
+                http,
+                client_id=client_id,
+                client_secret=client_secret,
+                code=code,
+                code_verifier=code_verifier,
+                redirect_uri=redirect_uri,
+            )
+    except RuntimeError as exc:
+        msg = str(exc)
+        if "Missing valid authorization header" in msg and not client_secret:
+            msg += " Set X_OAUTH2_CLIENT_SECRET and retry `x-cli auth login`."
+        raise click.ClickException(msg) from exc
+
+    access_token = str(token_data["access_token"])
+    refresh_token = token_data.get("refresh_token")
+    expires_at = expires_at_from_expires_in(token_data.get("expires_in"))
+    persist_oauth2_tokens(
+        get_config_env_path(),
+        access_token=access_token,
+        refresh_token=str(refresh_token) if refresh_token else None,
+        expires_at=expires_at,
+    )
+    if expires_at:
+        ttl = max(0, expires_at - int(time.time()))
+        click.echo(f"OAuth2 login successful. Token expires in about {ttl // 60} minutes.")
+    else:
+        click.echo("OAuth2 login successful.")
+
+
+@auth.command("logout")
+def auth_logout():
+    """Remove stored OAuth2 tokens."""
+    clear_oauth2_tokens(get_config_env_path())
+    click.echo("Removed OAuth2 tokens from ~/.config/x-cli/.env")
+
+
+@auth.command("status")
+def auth_status():
+    """Show OAuth2 login status."""
+    load_env_files()
+    access = os.environ.get("X_OAUTH2_ACCESS_TOKEN")
+    refresh = os.environ.get("X_OAUTH2_REFRESH_TOKEN")
+    expires_raw = os.environ.get("X_OAUTH2_EXPIRES_AT")
+    if not access:
+        click.echo("OAuth2: not logged in")
+        return
+    click.echo("OAuth2: logged in")
+    click.echo(f"Refresh token: {'present' if refresh else 'missing'}")
+    if not expires_raw:
+        click.echo("Access token expiry: unknown")
+        return
+    try:
+        expires_at = int(expires_raw)
+    except ValueError:
+        click.echo("Access token expiry: invalid value in X_OAUTH2_EXPIRES_AT")
+        return
+    remaining = expires_at - int(time.time())
+    if remaining <= 0:
+        click.echo("Access token expiry: expired")
+    else:
+        click.echo(f"Access token expiry: in {remaining // 60} minutes")
 
 
 # ============================================================

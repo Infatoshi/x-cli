@@ -6,7 +6,8 @@ from typing import Any
 
 import httpx
 
-from .auth import Credentials, generate_oauth_header
+from .auth import Credentials, generate_oauth_header, get_config_env_path
+from .oauth2 import expires_at_from_expires_in, persist_oauth2_tokens, refresh_access_token, token_expired
 
 API_BASE = "https://api.x.com/2"
 
@@ -15,6 +16,7 @@ class XApiClient:
     def __init__(self, creds: Credentials) -> None:
         self.creds = creds
         self._user_id: str | None = None
+        self._oauth2_user_id: str | None = None
         self._http = httpx.Client(timeout=30.0)
 
     def close(self) -> None:
@@ -34,18 +36,41 @@ class XApiClient:
         resp = self._http.request(method, url, headers=headers, json=json_body if json_body else None)
         return self._handle(resp)
 
+    def _oauth2_user_request(
+        self,
+        method: str,
+        url: str,
+        json_body: dict | None = None,
+        *,
+        retry_on_401: bool = True,
+    ) -> dict[str, Any]:
+        self._ensure_oauth2_access_token()
+        headers: dict[str, str] = {"Authorization": f"Bearer {self.creds.oauth2_access_token}"}
+        if json_body is not None:
+            headers["Content-Type"] = "application/json"
+        resp = self._http.request(method, url, headers=headers, json=json_body if json_body else None)
+        if resp.status_code == 401 and retry_on_401:
+            self._refresh_oauth2_access_token()
+            return self._oauth2_user_request(method, url, json_body, retry_on_401=False)
+        if resp.status_code == 403:
+            try:
+                payload = resp.json()
+            except ValueError:
+                payload = {}
+            detail = str(payload.get("detail", ""))
+            if "OAuth 2.0 Application-Only" in detail:
+                raise RuntimeError(
+                    "Stored X_OAUTH2_ACCESS_TOKEN is not a user-context token. "
+                    "Run `x-cli auth login` to obtain an OAuth2 User Context token for bookmarks."
+                )
+        return self._handle(resp)
+
     def _handle(self, resp: httpx.Response) -> dict[str, Any]:
         if resp.status_code == 429:
             reset = resp.headers.get("x-rate-limit-reset", "unknown")
             raise RuntimeError(f"Rate limited. Resets at {reset}.")
         data = resp.json()
         if not resp.is_success:
-            if self._is_bookmarks_oauth2_only_error(resp, data):
-                raise RuntimeError(
-                    "Bookmarks endpoints require OAuth 2.0 User Context. "
-                    "x-cli currently authenticates with OAuth 1.0a user tokens, so "
-                    "`me bookmarks`, `me bookmark`, and `me unbookmark` are not supported yet."
-                )
             msg = self._extract_error_message(resp, data)
             raise RuntimeError(f"API error (HTTP {resp.status_code}): {msg}")
         return data
@@ -66,17 +91,46 @@ class XApiClient:
             return str(title)
         return resp.text[:500]
 
-    @staticmethod
-    def _is_bookmarks_oauth2_only_error(resp: httpx.Response, data: dict[str, Any]) -> bool:
-        if resp.status_code != 403:
-            return False
-        problem_type = str(data.get("type", ""))
-        detail = str(data.get("detail", ""))
-        path = resp.request.url.path
-        return (
-            "/bookmarks" in path
-            and "unsupported-authentication" in problem_type
-            and "OAuth 2.0 User Context" in detail
+    def _ensure_oauth2_access_token(self) -> None:
+        if not self.creds.oauth2_access_token:
+            raise RuntimeError(
+                "Missing OAuth2 user token for bookmarks. Run `x-cli auth login` to set "
+                "X_OAUTH2_ACCESS_TOKEN/X_OAUTH2_REFRESH_TOKEN."
+            )
+        if token_expired(self.creds.oauth2_expires_at):
+            self._refresh_oauth2_access_token()
+
+    def _refresh_oauth2_access_token(self) -> None:
+        if not self.creds.oauth2_client_id:
+            raise RuntimeError(
+                "Missing env var X_OAUTH2_CLIENT_ID. Set it first, then run `x-cli auth login`."
+            )
+        if not self.creds.oauth2_refresh_token:
+            raise RuntimeError(
+                "OAuth2 access token expired and no refresh token is available. Run `x-cli auth login`."
+            )
+        data = refresh_access_token(
+            self._http,
+            client_id=self.creds.oauth2_client_id,
+            client_secret=self.creds.oauth2_client_secret,
+            refresh_token=self.creds.oauth2_refresh_token,
+        )
+        self._persist_oauth2_tokens_from_response(data)
+
+    def _persist_oauth2_tokens_from_response(self, data: dict[str, Any]) -> None:
+        access_token = str(data["access_token"])
+        refresh_token = data.get("refresh_token") or self.creds.oauth2_refresh_token
+        expires_at = expires_at_from_expires_in(data.get("expires_in"))
+
+        self.creds.oauth2_access_token = access_token
+        self.creds.oauth2_refresh_token = str(refresh_token) if refresh_token else None
+        self.creds.oauth2_expires_at = expires_at
+
+        persist_oauth2_tokens(
+            get_config_env_path(),
+            access_token=access_token,
+            refresh_token=self.creds.oauth2_refresh_token,
+            expires_at=expires_at,
         )
 
     def get_authenticated_user_id(self) -> str:
@@ -85,6 +139,13 @@ class XApiClient:
         data = self._oauth_request("GET", f"{API_BASE}/users/me")
         self._user_id = data["data"]["id"]
         return self._user_id
+
+    def get_authenticated_user_id_oauth2(self) -> str:
+        if self._oauth2_user_id:
+            return self._oauth2_user_id
+        data = self._oauth2_user_request("GET", f"{API_BASE}/users/me")
+        self._oauth2_user_id = data["data"]["id"]
+        return self._oauth2_user_id
 
     # ---- tweets ----
 
@@ -209,10 +270,10 @@ class XApiClient:
         user_id = self.get_authenticated_user_id()
         return self._oauth_request("POST", f"{API_BASE}/users/{user_id}/retweets", {"tweet_id": tweet_id})
 
-    # ---- bookmarks (X currently requires OAuth 2.0 User Context) ----
+    # ---- bookmarks (OAuth 2.0 User Context) ----
 
     def get_bookmarks(self, max_results: int = 10) -> dict[str, Any]:
-        user_id = self.get_authenticated_user_id()
+        user_id = self.get_authenticated_user_id_oauth2()
         max_results = max(1, min(max_results, 100))
         params = {
             "max_results": str(max_results),
@@ -223,12 +284,12 @@ class XApiClient:
         }
         qs = "&".join(f"{k}={v}" for k, v in params.items())
         url = f"{API_BASE}/users/{user_id}/bookmarks?{qs}"
-        return self._oauth_request("GET", url)
+        return self._oauth2_user_request("GET", url)
 
     def bookmark_tweet(self, tweet_id: str) -> dict[str, Any]:
-        user_id = self.get_authenticated_user_id()
-        return self._oauth_request("POST", f"{API_BASE}/users/{user_id}/bookmarks", {"tweet_id": tweet_id})
+        user_id = self.get_authenticated_user_id_oauth2()
+        return self._oauth2_user_request("POST", f"{API_BASE}/users/{user_id}/bookmarks", {"tweet_id": tweet_id})
 
     def unbookmark_tweet(self, tweet_id: str) -> dict[str, Any]:
-        user_id = self.get_authenticated_user_id()
-        return self._oauth_request("DELETE", f"{API_BASE}/users/{user_id}/bookmarks/{tweet_id}")
+        user_id = self.get_authenticated_user_id_oauth2()
+        return self._oauth2_user_request("DELETE", f"{API_BASE}/users/{user_id}/bookmarks/{tweet_id}")
