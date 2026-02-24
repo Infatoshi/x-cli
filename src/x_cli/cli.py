@@ -89,8 +89,17 @@ def tweet_delete(state, id_or_url):
 @click.argument("text")
 @pass_state
 def tweet_reply(state, id_or_url, text):
-    """Reply to a tweet."""
+    """Reply to a tweet.
+
+    NOTE: X restricts programmatic replies. You can only reply if the original
+    author @mentioned you or quoted your post. Use 'tweet quote' as a workaround.
+    """
     tid = parse_tweet_id(id_or_url)
+    click.echo(
+        "Warning: X restricts programmatic replies. This will only succeed if "
+        "the original author @mentioned you or quoted your post.",
+        err=True,
+    )
     data = state.client.post_tweet(text, reply_to=tid)
     state.output(data, "Reply")
 

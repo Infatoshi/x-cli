@@ -64,6 +64,8 @@ class XApiClient:
     ) -> dict[str, Any]:
         body: dict[str, Any] = {"text": text}
         if reply_to:
+            # NOTE: X API restricts programmatic replies (Feb 2024). Replies only
+            # succeed if the original author @mentioned you or quoted your post.
             body["reply"] = {"in_reply_to_tweet_id": reply_to}
         if quote_tweet_id:
             body["quote_tweet_id"] = quote_tweet_id

@@ -146,6 +146,9 @@ Your Access Token was generated before you enabled write permissions. Go to the 
 ### 401 Unauthorized
 Double-check all 5 credentials in your `.env`. No extra spaces or newlines.
 
+### Reply fails with a permissions/restriction error
+As of Feb 2024, X restricts programmatic replies via the API. You can only reply if the original author @mentions you or quotes your post. This applies to Free, Basic, Pro, and Pay-Per-Use tiers (Enterprise is exempt). Use `tweet quote` as a workaround.
+
 ### 429 Rate Limited
 The error includes the reset timestamp. Wait until then.
 

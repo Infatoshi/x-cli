@@ -84,7 +84,7 @@ Four modes routed by `format_output(data, mode, title, verbose)`:
 | `post` | `TEXT` | `--poll OPTIONS` `--poll-duration MINS` | `post_tweet()` |
 | `get` | `ID_OR_URL` | | `get_tweet()` |
 | `delete` | `ID_OR_URL` | | `delete_tweet()` |
-| `reply` | `ID_OR_URL` `TEXT` | | `post_tweet(reply_to=)` |
+| `reply` | `ID_OR_URL` `TEXT` | | `post_tweet(reply_to=)` -- **Restricted**: only works if original author @mentioned you or quoted your post |
 | `quote` | `ID_OR_URL` `TEXT` | | `post_tweet(quote_tweet_id=)` |
 | `search` | `QUERY` | `--max N` | `search_tweets()` |
 | `metrics` | `ID_OR_URL` | | `get_tweet_metrics()` |
@@ -149,6 +149,7 @@ Tests cover utils (tweet ID parsing), formatters (JSON/TSV output), and auth (OA
 |-------|-------|-----|
 | 403 "oauth1-permissions" | Access Token is Read-only | Enable "Read and write" in app settings, regenerate Access Token |
 | 401 Unauthorized | Bad credentials | Verify all 5 values in `.env` |
+| Reply fails / restriction error | X restricts programmatic replies (Feb 2024) | Can only reply if original author @mentioned you or quoted your post. Use `tweet quote` instead |
 | 429 Rate Limited | Too many requests | Error includes reset timestamp |
 | "Missing env var" | `.env` not found or incomplete | Check `~/.config/x-cli/.env` or set env vars directly |
 | `RuntimeError: API error` | Twitter API returned an error | Check the error message for details (usually permissions or invalid IDs) |
