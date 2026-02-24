@@ -9,6 +9,7 @@ from .api import XApiClient
 from .auth import load_credentials
 from .formatters import format_output
 from .utils import parse_tweet_id, strip_at
+from .watch import WatchTarget, watch_loop
 
 
 class State:
@@ -261,6 +262,50 @@ def retweet(state, id_or_url):
     tid = parse_tweet_id(id_or_url)
     data = state.client.retweet(tid)
     state.output(data, "Retweeted")
+
+
+# ============================================================
+# watch
+# ============================================================
+
+@cli.command("watch")
+@click.argument("usernames", nargs=-1, required=True)
+@click.option("--interval", "-i", default=60, type=int, help="Poll interval in seconds (default: 60)")
+@click.option("--filter", "-f", "filters", multiple=True, help="Only show tweets containing keyword (repeatable)")
+@click.option("--notify", "-n", is_flag=True, default=False, help="Desktop notifications for new tweets")
+@click.option("--max", "max_tweets", default=None, type=int, help="Stop after N tweets")
+@pass_state
+def watch(state, usernames, interval, filters, notify, max_tweets):
+    """Watch accounts for new tweets in real-time.
+
+    \b
+    Examples:
+      x-cli watch CheddarFlow
+      x-cli watch CheddarFlow unusual_whales --interval 30
+      x-cli watch CheddarFlow -f "$NVDA" -f "$TSLA"
+      x-cli watch CheddarFlow --notify --max 50
+    """
+    # Resolve usernames to user IDs
+    targets = []
+    for username in usernames:
+        uname = strip_at(username)
+        try:
+            user_data = state.client.get_user(uname)
+            uid = user_data["data"]["id"]
+            targets.append(WatchTarget(username=uname, user_id=uid))
+        except RuntimeError as e:
+            raise click.ClickException(f"Could not find user @{uname}: {e}")
+
+    watch_loop(
+        client=state.client,
+        targets=targets,
+        interval=interval,
+        filters=list(filters),
+        notify=notify,
+        max_tweets=max_tweets,
+        mode=state.mode,
+        verbose=state.verbose,
+    )
 
 
 def main():
