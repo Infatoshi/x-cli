@@ -1,4 +1,4 @@
-"""Auth: env var loading and OAuth 1.0a header generation."""
+"""Auth: env var loading and OAuth header generation."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
+from .oauth2 import migrate_legacy_oauth2_tokens
 
 
 @dataclass
@@ -22,15 +23,36 @@ class Credentials:
     access_token: str
     access_token_secret: str
     bearer_token: str
+    oauth2_client_id: str | None = None
+    oauth2_client_secret: str | None = None
+    oauth2_access_token: str | None = None
+    oauth2_refresh_token: str | None = None
+    oauth2_expires_at: int | None = None
+
+
+def get_config_env_path() -> Path:
+    return Path.home() / ".config" / "x-cli" / ".env"
+
+
+def get_config_auth2_env_path() -> Path:
+    return Path.home() / ".config" / "x-cli" / ".env.auth2"
+
+
+def load_env_files() -> None:
+    """Load env files with auth2 token precedence over static config."""
+    config_env = get_config_env_path()
+    if config_env.exists():
+        load_dotenv(config_env)
+    load_dotenv()
+    auth2_env = get_config_auth2_env_path()
+    migrate_legacy_oauth2_tokens(config_env, auth2_env)
+    if auth2_env.exists():
+        load_dotenv(auth2_env, override=True)
 
 
 def load_credentials() -> Credentials:
     """Load credentials from env vars, with .env fallback."""
-    # Try ~/.config/x-cli/.env then cwd .env
-    config_env = Path.home() / ".config" / "x-cli" / ".env"
-    if config_env.exists():
-        load_dotenv(config_env)
-    load_dotenv()  # cwd .env
+    load_env_files()
 
     def require(name: str) -> str:
         val = os.environ.get(name)
@@ -41,12 +63,26 @@ def load_credentials() -> Credentials:
             )
         return val
 
+    def optional_int(name: str) -> int | None:
+        val = os.environ.get(name)
+        if not val:
+            return None
+        try:
+            return int(val)
+        except ValueError as exc:
+            raise SystemExit(f"Invalid env var: {name} must be an integer unix timestamp.") from exc
+
     return Credentials(
         api_key=require("X_API_KEY"),
         api_secret=require("X_API_SECRET"),
         access_token=require("X_ACCESS_TOKEN"),
         access_token_secret=require("X_ACCESS_TOKEN_SECRET"),
         bearer_token=require("X_BEARER_TOKEN"),
+        oauth2_client_id=os.environ.get("X_OAUTH2_CLIENT_ID"),
+        oauth2_client_secret=os.environ.get("X_OAUTH2_CLIENT_SECRET"),
+        oauth2_access_token=os.environ.get("X_OAUTH2_ACCESS_TOKEN"),
+        oauth2_refresh_token=os.environ.get("X_OAUTH2_REFRESH_TOKEN"),
+        oauth2_expires_at=optional_int("X_OAUTH2_EXPIRES_AT"),
     )
 
 

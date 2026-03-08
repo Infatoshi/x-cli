@@ -1,9 +1,11 @@
 """Tests for x_cli.auth."""
 
+import os
+from pathlib import Path
 
 import pytest
 
-from x_cli.auth import generate_oauth_header, Credentials
+from x_cli.auth import Credentials, generate_oauth_header, load_env_files
 
 
 @pytest.fixture
@@ -49,3 +51,19 @@ class TestGenerateOAuthHeader:
         url = "https://api.x.com/2/tweets/123?tweet.fields=created_at,public_metrics"
         header = generate_oauth_header("GET", url, creds)
         assert header.startswith("OAuth ")
+
+
+def test_load_env_files_prefers_auth2_file(monkeypatch, tmp_path: Path):
+    config_env = tmp_path / ".env"
+    auth2_env = tmp_path / ".env.auth2"
+    config_env.write_text("X_OAUTH2_ACCESS_TOKEN=config-token\n")
+    auth2_env.write_text("X_OAUTH2_ACCESS_TOKEN=auth2-token\n")
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("x_cli.auth.get_config_env_path", lambda: config_env)
+    monkeypatch.setattr("x_cli.auth.get_config_auth2_env_path", lambda: auth2_env)
+    monkeypatch.delenv("X_OAUTH2_ACCESS_TOKEN", raising=False)
+
+    load_env_files()
+
+    assert os.environ.get("X_OAUTH2_ACCESS_TOKEN") == "auth2-token"

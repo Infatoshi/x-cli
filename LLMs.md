@@ -6,9 +6,14 @@ You are an AI agent working with the x-cli codebase. This file tells you where e
 
 ## What This Is
 
-x-cli is a Python CLI that talks directly to the Twitter/X API v2. It uses OAuth 1.0a for write operations and Bearer token auth for read operations. No third-party auth libraries -- signing is done with stdlib `hmac`/`hashlib`.
+x-cli is a Python CLI that talks directly to the Twitter/X API v2. It uses:
+- OAuth 1.0a for user-context write/engagement endpoints (tweet post/delete, like, retweet, mentions).
+- App Bearer token for public read endpoints.
+- OAuth 2.0 User Context (PKCE) for bookmarks endpoints.
 
-It shares the same credentials as x-mcp (the MCP server counterpart). If a user already has x-mcp configured, they can symlink its `.env` to `~/.config/x-cli/.env`.
+No third-party auth frameworks are used; OAuth signing/challenge logic is implemented in project code.
+
+It shares static credentials with x-mcp via `~/.config/x-cli/.env`. Mutable OAuth2 token keys are stored in `~/.config/x-cli/.env.auth2`.
 
 ---
 
@@ -17,11 +22,15 @@ It shares the same credentials as x-mcp (the MCP server counterpart). If a user 
 ```
 src/x_cli/
     cli.py          -- Click command groups and entry point
-    api.py          -- XApiClient: one method per Twitter API v2 endpoint
-    auth.py         -- Credential loading and OAuth 1.0a HMAC-SHA1 signing
+    api.py          -- XApiClient: endpoint methods + auth routing
+    auth.py         -- Env loading + OAuth 1.0a HMAC-SHA1 signing
+    oauth2.py       -- OAuth2 PKCE helpers, token exchange/refresh, token persistence
     formatters.py   -- Human (rich), JSON, and TSV output modes
     utils.py        -- Tweet ID parsing from URLs, username stripping
 tests/
+    test_api.py
+    test_cli_auth.py
+    test_oauth2.py
     test_utils.py
     test_formatters.py
     test_auth.py
@@ -33,7 +42,7 @@ tests/
 
 ### `cli.py` -- Start here
 
-The entry point. Defines Click command groups: `tweet`, `user`, `me`, plus top-level `like` and `retweet`. Every command follows the same pattern: parse args, call the API client, pass the response to a formatter.
+The entry point. Defines Click command groups: `auth`, `tweet`, `user`, `me`, plus top-level `like` and `retweet`. Most commands follow the same pattern: parse args, call the API client, pass the response to a formatter.
 
 The `State` object holds the output mode (`human`/`json`/`plain`/`markdown`) and verbose flag, and lazily initializes the API client. It's passed via Click's context system (`@pass_state`).
 
@@ -43,21 +52,32 @@ Global flags: `-j`/`--json`, `-p`/`--plain`, `-md`/`--markdown` control output m
 
 `XApiClient` wraps all Twitter API v2 endpoints. Key patterns:
 
-- **Read-only endpoints** (get_tweet, search, get_user, get_timeline, get_followers, get_following) use Bearer token auth via `_bearer_get()` or direct `httpx` calls with Bearer header.
-- **Write endpoints** (post_tweet, delete_tweet, like, retweet, bookmark) use OAuth 1.0a via `_oauth_request()`.
-- **Authenticated read endpoints** (get_mentions, get_bookmarks) use OAuth 1.0a because they access the authenticated user's data.
-- `get_authenticated_user_id()` resolves and caches the current user's numeric ID (needed for like/retweet/bookmark/mentions endpoints).
+- **Read-only endpoints** (get_tweet, search, get_user, get_timeline, get_followers, get_following) use app Bearer token auth.
+- **OAuth 1.0a endpoints** (post_tweet, delete_tweet, like, retweet, mentions) use `_oauth_request()`.
+- **OAuth 2.0 user-context endpoints** (bookmarks) use `_oauth2_user_request()`.
+- `get_authenticated_user_id()` caches OAuth1 user id; `get_authenticated_user_id_oauth2()` caches OAuth2 user id.
+- OAuth2 refresh is automatic using stored refresh token and expiry metadata.
+- OAuth2 token exchange/refresh optionally uses `X_OAUTH2_CLIENT_SECRET` for app types that require client authentication.
 
 All methods return raw `dict` parsed from the API JSON response. Error handling is in `_handle()` -- raises `RuntimeError` on non-2xx or rate limit responses.
 
-### `auth.py` -- OAuth signing
+### `auth.py` -- Env + OAuth1 signing
 
 Two responsibilities:
 
-1. **`load_credentials()`** -- Loads 5 env vars (`X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`, `X_ACCESS_TOKEN_SECRET`, `X_BEARER_TOKEN`) with `.env` fallback from `~/.config/x-cli/.env` and current directory.
+1. **`load_credentials()`** -- Loads static vars from `~/.config/x-cli/.env` and current directory `.env`, then overlays mutable OAuth2 token vars from `~/.config/x-cli/.env.auth2`.
 2. **`generate_oauth_header()`** -- Builds an OAuth 1.0a `Authorization` header using HMAC-SHA1. Follows the standard OAuth signature base string construction: percent-encode params, sort, concatenate with `&`, sign with consumer secret + token secret.
 
 Query string parameters from the URL are included in the signature base string (required by OAuth spec).
+
+### `oauth2.py` -- OAuth2 PKCE + token management
+
+- Generates PKCE verifier/challenge/state.
+- Builds browser authorization URL.
+- Parses redirected URL for code/state validation (user must paste full browser address-bar URL).
+- Exchanges authorization code for tokens and refreshes access token.
+- Persists/removes OAuth2 token env vars in `~/.config/x-cli/.env.auth2`.
+- Auto-migrates legacy token keys from `~/.config/x-cli/.env` to `.env.auth2`.
 
 ### `formatters.py` -- Output
 
@@ -105,9 +125,17 @@ Note: `timeline`, `followers`, `following` resolve username to numeric ID automa
 | Command | Args | Flags | API method |
 |---------|------|-------|------------|
 | `mentions` | | `--max N` | `get_mentions()` |
-| `bookmarks` | | `--max N` | `get_bookmarks()` |
-| `bookmark` | `ID_OR_URL` | | `bookmark_tweet()` |
-| `unbookmark` | `ID_OR_URL` | | `unbookmark_tweet()` |
+| `bookmarks` | | `--max N` | `get_bookmarks()` (OAuth2 login required) |
+| `bookmark` | `ID_OR_URL` | | `bookmark_tweet()` (OAuth2 login required) |
+| `unbookmark` | `ID_OR_URL` | | `unbookmark_tweet()` (OAuth2 login required) |
+
+### Auth commands (`x-cli auth <action>`)
+
+| Command | Purpose |
+|---------|---------|
+| `login` | Run OAuth2 PKCE browser flow; store tokens |
+| `status` | Show OAuth2 token presence/expiry |
+| `logout` | Remove stored OAuth2 tokens |
 
 ### Top-level commands
 
@@ -139,7 +167,7 @@ The Twitter API v2 requires numeric user IDs for timeline/followers/following en
 uv run pytest tests/ -v
 ```
 
-Tests cover utils (tweet ID parsing), formatters (JSON/TSV output), and auth (OAuth header generation). No live API calls in tests.
+Tests cover utils, formatters, OAuth1 signing, OAuth2 helpers, API auth routing, and auth CLI command behavior. No live API calls in tests.
 
 ---
 
@@ -148,8 +176,13 @@ Tests cover utils (tweet ID parsing), formatters (JSON/TSV output), and auth (OA
 | Error | Cause | Fix |
 |-------|-------|-----|
 | 403 "oauth1-permissions" | Access Token is Read-only | Enable "Read and write" in app settings, regenerate Access Token |
+| "Missing OAuth2 user token for bookmarks" | OAuth2 login not completed | Set `X_OAUTH2_CLIENT_ID` and run `x-cli auth login` |
+| X consent page says "Something went wrong" | Callback URL mismatch | Configure callback exactly as `https://example.com/oauth/callback` (or set matching `X_OAUTH2_REDIRECT_URI`) |
+| "OAuth2 token request failed (HTTP 401): Missing valid authorization header" | App requires OAuth2 client authentication for token exchange | Set `X_OAUTH2_CLIENT_SECRET` and retry `x-cli auth login` |
+| "X_OAUTH2_ACCESS_TOKEN is not a user-context token" | Token is OAuth2 app-only bearer token | Run `x-cli auth login` and use returned user-context token |
+| 401 on bookmarks after login | OAuth2 token expired/revoked and refresh failed | Re-run `x-cli auth login` |
 | 401 Unauthorized | Bad credentials | Verify all 5 values in `.env` |
 | Reply fails / restriction error | X restricts programmatic replies (Feb 2024) | Can only reply if original author @mentioned you or quoted your post. Use `tweet quote` instead |
 | 429 Rate Limited | Too many requests | Error includes reset timestamp |
-| "Missing env var" | `.env` not found or incomplete | Check `~/.config/x-cli/.env` or set env vars directly |
+| "Missing env var" | Static `.env` missing required keys | Check `~/.config/x-cli/.env` (and optional cwd `.env`) |
 | `RuntimeError: API error` | Twitter API returned an error | Check the error message for details (usually permissions or invalid IDs) |
