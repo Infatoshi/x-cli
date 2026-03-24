@@ -10,14 +10,16 @@ Uses the same auth credentials as [x-mcp](https://github.com/INFATOSHI/x-mcp). I
 
 ## What Can It Do?
 
-| Category | Commands | Examples |
-|----------|----------|----------|
-| **Post** | `tweet post`, `tweet reply`, `tweet quote`, `tweet delete` | `x-cli tweet post "hello world"` |
-| **Read** | `tweet get`, `tweet search`, `user timeline`, `me mentions` | `x-cli tweet search "from:elonmusk"` |
-| **Users** | `user get`, `user followers`, `user following` | `x-cli user get openai` |
-| **Engage** | `like`, `retweet` | `x-cli like <tweet-url>` |
-| **Bookmarks** | `me bookmarks`, `me bookmark`, `me unbookmark` | `x-cli me bookmarks --max 20` |
-| **Analytics** | `tweet metrics` | `x-cli tweet metrics <tweet-id>` |
+| Category | Commands | Examples | Status |
+|----------|----------|----------|--------|
+| **Post** | `tweet post`, `tweet quote`, `tweet delete` | `x-cli tweet post "hello world"` | OK |
+| **Read** | `tweet get`, `tweet search`, `user timeline`, `me mentions` | `x-cli tweet search "from:elonmusk"` | OK |
+| **Users** | `user get`, `user followers`, `user following` | `x-cli user get openai` | OK |
+| **Engage** | `retweet` | `x-cli retweet <tweet-url>` | OK |
+| **Bookmarks** | `me bookmarks`, `me bookmark`, `me unbookmark` | `x-cli me bookmarks --max 20` | Requires Basic+ tier |
+| **Analytics** | `tweet metrics` | `x-cli tweet metrics <tweet-id>` | OK |
+| **Reply** | `tweet reply` | `x-cli tweet reply <url> "text"` | Restricted (see below) |
+| **Like** | `like` | `x-cli like <tweet-url>` | Removed on Free tier (see below) |
 
 Accepts tweet URLs or IDs interchangeably -- paste `https://x.com/user/status/123` or just `123`.
 
@@ -138,6 +140,24 @@ x-cli -v -j tweet get <id>           # full JSON (includes, meta, everything)
 
 ---
 
+## API Restrictions (as of 2025-2026)
+
+X has progressively restricted what automated/API clients can do. Here's what affects x-cli:
+
+### Likes removed from Free tier (Aug 2025)
+The `like` endpoint (`POST /2/users/:id/likes`) was removed from the Free API tier in August 2025. If you're on the Free tier, `x-cli like` will return a permissions error. Paid tiers (Basic, Pro, Enterprise) are unaffected.
+
+### Programmatic replies restricted (Feb 2026)
+Replies via the API now only succeed if the original post's author @mentioned you or quoted your post. This applies to **all self-serve tiers** (Free, Basic, Pro, Pay-Per-Use). Only Enterprise is exempt. Use `tweet quote` as a workaround.
+
+### Bookmarks require Basic+ tier
+Bookmark endpoints have never been available on the Free tier. You need at least Basic ($200/mo) to use `me bookmarks`, `me bookmark`, and `me unbookmark`.
+
+### Post volume caps
+Free tier: 500 posts/month. Basic: 10,000/month. Pro: 1,000,000/month.
+
+---
+
 ## Troubleshooting
 
 ### 403 "oauth1-permissions" when posting
@@ -147,7 +167,7 @@ Your Access Token was generated before you enabled write permissions. Go to the 
 Double-check all 5 credentials in your `.env`. No extra spaces or newlines.
 
 ### Reply fails with a permissions/restriction error
-As of Feb 2024, X restricts programmatic replies via the API. You can only reply if the original author @mentions you or quotes your post. This applies to Free, Basic, Pro, and Pay-Per-Use tiers (Enterprise is exempt). Use `tweet quote` as a workaround.
+As of Feb 2026, X restricts programmatic replies via the API on all self-serve tiers. You can only reply if the original author @mentions you or quotes your post. This applies to Free, Basic, Pro, and Pay-Per-Use tiers (Enterprise is exempt). Use `tweet quote` as a workaround.
 
 ### 429 Rate Limited
 The error includes the reset timestamp. Wait until then.

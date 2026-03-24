@@ -91,13 +91,16 @@ def tweet_delete(state, id_or_url):
 def tweet_reply(state, id_or_url, text):
     """Reply to a tweet.
 
-    NOTE: X restricts programmatic replies. You can only reply if the original
-    author @mentioned you or quoted your post. Use 'tweet quote' as a workaround.
+    NOTE: As of Feb 2026, X restricts programmatic replies on all self-serve
+    tiers (Free, Basic, Pro, Pay-Per-Use). You can only reply if the original
+    author @mentioned you or quoted your post. Enterprise is exempt.
+    Use 'tweet quote' as a workaround.
     """
     tid = parse_tweet_id(id_or_url)
     click.echo(
-        "Warning: X restricts programmatic replies. This will only succeed if "
-        "the original author @mentioned you or quoted your post.",
+        "Warning: X restricts programmatic replies on all self-serve tiers "
+        "(Free, Basic, Pro, Pay-Per-Use). This will only succeed if the "
+        "original author @mentioned you or quoted your post. Enterprise is exempt.",
         err=True,
     )
     data = state.client.post_tweet(text, reply_to=tid)
@@ -247,8 +250,17 @@ def me_unbookmark(state, id_or_url):
 @click.argument("id_or_url")
 @pass_state
 def like(state, id_or_url):
-    """Like a tweet."""
+    """Like a tweet.
+
+    NOTE: As of Aug 2025, the like endpoint was removed from the Free API tier.
+    This command only works on paid tiers (Basic, Pro, Enterprise).
+    """
     tid = parse_tweet_id(id_or_url)
+    click.echo(
+        "Warning: The like endpoint was removed from the Free API tier in Aug 2025. "
+        "This only works on paid tiers (Basic, Pro, Enterprise).",
+        err=True,
+    )
     data = state.client.like_tweet(tid)
     state.output(data, "Liked")
 
