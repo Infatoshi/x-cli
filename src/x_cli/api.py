@@ -11,6 +11,14 @@ from .auth import Credentials, generate_oauth_header
 API_BASE = "https://api.x.com/2"
 
 
+class RateLimitError(RuntimeError):
+    """Raised when the API returns HTTP 429."""
+
+    def __init__(self, reset_at: str) -> None:
+        self.reset_at = reset_at
+        super().__init__(f"Rate limited. Resets at {reset_at}.")
+
+
 class XApiClient:
     def __init__(self, creds: Credentials) -> None:
         self.creds = creds
@@ -37,7 +45,7 @@ class XApiClient:
     def _handle(self, resp: httpx.Response) -> dict[str, Any]:
         if resp.status_code == 429:
             reset = resp.headers.get("x-rate-limit-reset", "unknown")
-            raise RuntimeError(f"Rate limited. Resets at {reset}.")
+            raise RateLimitError(reset)
         data = resp.json()
         if not resp.is_success:
             errors = data.get("errors", [])
@@ -110,7 +118,9 @@ class XApiClient:
         fields = "user.fields=created_at,description,public_metrics,verified,profile_image_url,url,location,pinned_tweet_id"
         return self._bearer_get(f"{API_BASE}/users/by/username/{username}?{fields}")
 
-    def get_timeline(self, user_id: str, max_results: int = 10) -> dict[str, Any]:
+    def get_timeline(
+        self, user_id: str, max_results: int = 10, since_id: str | None = None
+    ) -> dict[str, Any]:
         max_results = max(5, min(max_results, 100))
         params = {
             "max_results": str(max_results),
@@ -119,6 +129,8 @@ class XApiClient:
             "user.fields": "name,username,verified",
             "media.fields": "url,preview_image_url,type",
         }
+        if since_id:
+            params["since_id"] = since_id
         resp = self._http.get(
             f"{API_BASE}/users/{user_id}/tweets",
             params=params,
