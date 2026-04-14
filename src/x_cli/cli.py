@@ -242,6 +242,18 @@ def me_unbookmark(state, id_or_url):
     state.output(data, "Unbookmarked")
 
 
+@me.command("likes")
+@click.option("--max", "max_results", default=10, type=int, help="Max results (1-35, API hard-cap)")
+@pass_state
+def me_likes(state, max_results):
+    """Fetch your liked tweets.
+
+    Note: The API hard-caps at ~35 results per request regardless of max_results.
+    """
+    data = state.client.get_liked_tweets(max_results)
+    state.output(data, "Likes")
+
+
 # ============================================================
 # quick actions (top-level)
 # ============================================================
