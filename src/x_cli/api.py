@@ -198,3 +198,24 @@ class XApiClient:
     def unbookmark_tweet(self, tweet_id: str) -> dict[str, Any]:
         user_id = self.get_authenticated_user_id()
         return self._oauth_request("DELETE", f"{API_BASE}/users/{user_id}/bookmarks/{tweet_id}")
+
+    # ---- liked tweets (OAuth 1.0a) ----
+
+    def get_liked_tweets(self, max_results: int = 10) -> dict[str, Any]:
+        """Fetch the authenticated user's liked tweets.
+
+        Note: The API hard-caps this endpoint at ~35 results per request regardless
+        of max_results. Values above 35 return HTTP 400.
+        """
+        user_id = self.get_authenticated_user_id()
+        max_results = max(1, min(max_results, 35))
+        params = {
+            "max_results": str(max_results),
+            "tweet.fields": "created_at,public_metrics,author_id,conversation_id,entities,lang,note_tweet",
+            "expansions": "author_id,attachments.media_keys",
+            "user.fields": "name,username,verified,profile_image_url",
+            "media.fields": "url,preview_image_url,type",
+        }
+        qs = "&".join(f"{k}={v}" for k, v in params.items())
+        url = f"{API_BASE}/users/{user_id}/liked_tweets?{qs}"
+        return self._oauth_request("GET", url)
