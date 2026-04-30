@@ -7,8 +7,50 @@ from typing import Any
 import httpx
 
 from .auth import Credentials, generate_oauth_header
+from . import oauth2
 
 API_BASE = "https://api.x.com/2"
+FULL_ARCHIVE_START_TIME = "2006-03-21T00:00:00Z"
+
+
+def _merge_paginated_responses(pages: list[dict[str, Any]]) -> dict[str, Any]:
+    if not pages:
+        return {"data": [], "meta": {"result_count": 0}}
+
+    merged: dict[str, Any] = {"data": [], "includes": {}, "meta": {}}
+    seen_tweets: set[str] = set()
+
+    for page in pages:
+        for tweet in page.get("data", []):
+            tweet_id = tweet.get("id")
+            if tweet_id and tweet_id in seen_tweets:
+                continue
+            if tweet_id:
+                seen_tweets.add(tweet_id)
+            merged["data"].append(tweet)
+
+        for include_key, include_items in page.get("includes", {}).items():
+            target = merged["includes"].setdefault(include_key, [])
+            seen_include_ids = {
+                item.get("id") or item.get("media_key")
+                for item in target
+                if isinstance(item, dict)
+            }
+            for item in include_items:
+                item_id = item.get("id") or item.get("media_key")
+                if item_id and item_id in seen_include_ids:
+                    continue
+                target.append(item)
+                if item_id:
+                    seen_include_ids.add(item_id)
+
+    last_meta = pages[-1].get("meta", {})
+    merged["meta"] = {
+        **last_meta,
+        "result_count": len(merged["data"]),
+        "pages": len(pages),
+    }
+    return merged
 
 
 class XApiClient:
@@ -24,6 +66,20 @@ class XApiClient:
 
     def _bearer_get(self, url: str) -> dict[str, Any]:
         resp = self._http.get(url, headers={"Authorization": f"Bearer {self.creds.bearer_token}"})
+        return self._handle(resp)
+
+    def _oauth2_request(self, method: str, url: str, json_body: dict | None = None) -> dict[str, Any]:
+        if not (self.creds.oauth2_client_id and self.creds.oauth2_client_secret):
+            raise RuntimeError(
+                "OAuth 2.0 client creds missing. Set X_OAUTH2_CLIENT_ID and X_OAUTH2_CLIENT_SECRET."
+            )
+        token = oauth2.get_valid_access_token(
+            self.creds.oauth2_client_id, self.creds.oauth2_client_secret
+        )
+        headers = {"Authorization": f"Bearer {token}"}
+        if json_body is not None:
+            headers["Content-Type"] = "application/json"
+        resp = self._http.request(method, url, headers=headers, json=json_body if json_body else None)
         return self._handle(resp)
 
     def _oauth_request(self, method: str, url: str, json_body: dict | None = None) -> dict[str, Any]:
@@ -86,7 +142,15 @@ class XApiClient:
         qs = "&".join(f"{k}={v}" for k, v in params.items())
         return self._bearer_get(f"{API_BASE}/tweets/{tweet_id}?{qs}")
 
-    def search_tweets(self, query: str, max_results: int = 10) -> dict[str, Any]:
+    def search_tweets(
+        self,
+        query: str,
+        max_results: int = 10,
+        *,
+        next_token: str | None = None,
+        start_time: str | None = None,
+        end_time: str | None = None,
+    ) -> dict[str, Any]:
         max_results = max(10, min(max_results, 100))
         params = {
             "query": query,
@@ -96,9 +160,90 @@ class XApiClient:
             "user.fields": "name,username,verified,profile_image_url",
             "media.fields": "url,preview_image_url,type",
         }
+        if next_token:
+            params["next_token"] = next_token
+        if start_time:
+            params["start_time"] = start_time
+        if end_time:
+            params["end_time"] = end_time
         url = f"{API_BASE}/tweets/search/recent"
         resp = self._http.get(url, params=params, headers={"Authorization": f"Bearer {self.creds.bearer_token}"})
         return self._handle(resp)
+
+    def search_all_tweets(
+        self,
+        query: str,
+        max_results: int = 10,
+        *,
+        next_token: str | None = None,
+        start_time: str | None = None,
+        end_time: str | None = None,
+    ) -> dict[str, Any]:
+        max_results = max(10, min(max_results, 500))
+        start_time = start_time or FULL_ARCHIVE_START_TIME
+        params = {
+            "query": query,
+            "max_results": str(max_results),
+            "tweet.fields": "created_at,public_metrics,author_id,conversation_id,entities,lang,note_tweet",
+            "expansions": "author_id,attachments.media_keys",
+            "user.fields": "name,username,verified,profile_image_url",
+            "media.fields": "url,preview_image_url,type",
+        }
+        if next_token:
+            params["next_token"] = next_token
+        if start_time:
+            params["start_time"] = start_time
+        if end_time:
+            params["end_time"] = end_time
+        resp = self._http.get(
+            f"{API_BASE}/tweets/search/all",
+            params=params,
+            headers={"Authorization": f"Bearer {self.creds.bearer_token}"},
+        )
+        return self._handle(resp)
+
+    def search_tweets_paginated(
+        self,
+        query: str,
+        max_results: int,
+        *,
+        archive: bool = False,
+        start_time: str | None = None,
+        end_time: str | None = None,
+    ) -> dict[str, Any]:
+        page_size = 500 if archive else 100
+        if archive:
+            start_time = start_time or FULL_ARCHIVE_START_TIME
+        remaining = max(10, max_results)
+        next_token: str | None = None
+        pages: list[dict[str, Any]] = []
+
+        while remaining > 0:
+            fetch_size = min(page_size, remaining)
+            page = (
+                self.search_all_tweets(
+                    query,
+                    fetch_size,
+                    next_token=next_token,
+                    start_time=start_time,
+                    end_time=end_time,
+                )
+                if archive
+                else self.search_tweets(
+                    query,
+                    fetch_size,
+                    next_token=next_token,
+                    start_time=start_time,
+                    end_time=end_time,
+                )
+            )
+            pages.append(page)
+            remaining -= len(page.get("data", []))
+            next_token = page.get("meta", {}).get("next_token")
+            if not next_token or not page.get("data"):
+                break
+
+        return _merge_paginated_responses(pages)
 
     def get_tweet_metrics(self, tweet_id: str) -> dict[str, Any]:
         params = "tweet.fields=public_metrics,non_public_metrics,organic_metrics"
@@ -175,7 +320,7 @@ class XApiClient:
         user_id = self.get_authenticated_user_id()
         return self._oauth_request("POST", f"{API_BASE}/users/{user_id}/retweets", {"tweet_id": tweet_id})
 
-    # ---- bookmarks (OAuth 1.0a -- basic tier may not support these) ----
+    # ---- bookmarks (require OAuth 2.0 User Context) ----
 
     def get_bookmarks(self, max_results: int = 10) -> dict[str, Any]:
         user_id = self.get_authenticated_user_id()
@@ -189,12 +334,12 @@ class XApiClient:
         }
         qs = "&".join(f"{k}={v}" for k, v in params.items())
         url = f"{API_BASE}/users/{user_id}/bookmarks?{qs}"
-        return self._oauth_request("GET", url)
+        return self._oauth2_request("GET", url)
 
     def bookmark_tweet(self, tweet_id: str) -> dict[str, Any]:
         user_id = self.get_authenticated_user_id()
-        return self._oauth_request("POST", f"{API_BASE}/users/{user_id}/bookmarks", {"tweet_id": tweet_id})
+        return self._oauth2_request("POST", f"{API_BASE}/users/{user_id}/bookmarks", {"tweet_id": tweet_id})
 
     def unbookmark_tweet(self, tweet_id: str) -> dict[str, Any]:
         user_id = self.get_authenticated_user_id()
-        return self._oauth_request("DELETE", f"{API_BASE}/users/{user_id}/bookmarks/{tweet_id}")
+        return self._oauth2_request("DELETE", f"{API_BASE}/users/{user_id}/bookmarks/{tweet_id}")

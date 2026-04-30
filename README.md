@@ -86,8 +86,14 @@ x-cli tweet delete <id-or-url>
 x-cli tweet reply <id-or-url> "nice post"
 x-cli tweet quote <id-or-url> "this is important"
 x-cli tweet search "machine learning" --max 20
+x-cli tweet search "timelapse from:elliotarledge" --archive --all-pages --max 10000
 x-cli tweet metrics <id-or-url>
 ```
+
+`tweet search` uses recent search by default. Add `--archive` to use X's full-archive endpoint
+(`/2/tweets/search/all`), which requires pay-per-use or Enterprise access. Archive search defaults
+to X's March 2006 archive start; use `--start-time` to narrow it. Add `--all-pages` to follow
+pagination until there are no more results or `--max` results have been collected.
 
 ### Users
 

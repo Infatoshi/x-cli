@@ -22,15 +22,24 @@ class Credentials:
     access_token: str
     access_token_secret: str
     bearer_token: str
+    oauth2_client_id: str | None = None
+    oauth2_client_secret: str | None = None
+
+
+def _load_env_files() -> None:
+    # Also try ~/x-cli/.env since that's where the user's .env lives.
+    for candidate in (
+        Path.home() / ".config" / "x-cli" / ".env",
+        Path.home() / "x-cli" / ".env",
+    ):
+        if candidate.exists():
+            load_dotenv(candidate)
+    load_dotenv()  # cwd .env
 
 
 def load_credentials() -> Credentials:
     """Load credentials from env vars, with .env fallback."""
-    # Try ~/.config/x-cli/.env then cwd .env
-    config_env = Path.home() / ".config" / "x-cli" / ".env"
-    if config_env.exists():
-        load_dotenv(config_env)
-    load_dotenv()  # cwd .env
+    _load_env_files()
 
     def require(name: str) -> str:
         val = os.environ.get(name)
@@ -47,6 +56,8 @@ def load_credentials() -> Credentials:
         access_token=require("X_ACCESS_TOKEN"),
         access_token_secret=require("X_ACCESS_TOKEN_SECRET"),
         bearer_token=require("X_BEARER_TOKEN"),
+        oauth2_client_id=os.environ.get("X_OAUTH2_CLIENT_ID"),
+        oauth2_client_secret=os.environ.get("X_OAUTH2_CLIENT_SECRET"),
     )
 
 
