@@ -142,3 +142,22 @@ def test_get_liked_tweets_requires_like_read_scope(monkeypatch):
         assert "missing like.read" in str(exc)
     else:
         raise AssertionError("expected missing like.read error")
+
+
+def test_get_user_encodes_crafted_username_as_one_segment():
+    client = make_client([{"data": {"id": "1", "username": "victim"}}])
+
+    client.get_user("victim?user.fields=private")
+
+    url = client._http.calls[0]["url"]
+    assert "/users/by/username/victim%3Fuser.fields%3Dprivate?" in url
+    assert "user.fields=private&" not in url
+
+
+def test_get_timeline_encodes_crafted_user_id_as_one_segment():
+    client = make_client([{"data": [], "meta": {"result_count": 0}}])
+
+    client.get_timeline("123/followers")
+
+    url = client._http.calls[0]["url"]
+    assert url.endswith("/users/123%2Ffollowers/tweets")
