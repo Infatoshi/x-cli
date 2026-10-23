@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -10,6 +11,14 @@ from .auth import Credentials, generate_oauth_header
 from . import oauth2
 
 API_BASE = "https://api.x.com/2"
+
+
+def _seg(value: str) -> str:
+    # Path segments come from CLI input. Quote them so a value with
+    # "/", "?" or "#" stays one segment and cannot change the endpoint
+    # or inject query parameters.
+    return quote(str(value), safe="")
+
 FULL_ARCHIVE_START_TIME = "2006-03-21T00:00:00Z"
 
 
@@ -130,7 +139,7 @@ class XApiClient:
         return self._oauth_request("POST", f"{API_BASE}/tweets", body)
 
     def delete_tweet(self, tweet_id: str) -> dict[str, Any]:
-        return self._oauth_request("DELETE", f"{API_BASE}/tweets/{tweet_id}")
+        return self._oauth_request("DELETE", f"{API_BASE}/tweets/{_seg(tweet_id)}")
 
     def get_tweet(self, tweet_id: str) -> dict[str, Any]:
         params = {
@@ -140,7 +149,7 @@ class XApiClient:
             "media.fields": "url,preview_image_url,type,width,height,alt_text",
         }
         qs = "&".join(f"{k}={v}" for k, v in params.items())
-        return self._bearer_get(f"{API_BASE}/tweets/{tweet_id}?{qs}")
+        return self._bearer_get(f"{API_BASE}/tweets/{_seg(tweet_id)}?{qs}")
 
     def search_tweets(
         self,
@@ -247,13 +256,13 @@ class XApiClient:
 
     def get_tweet_metrics(self, tweet_id: str) -> dict[str, Any]:
         params = "tweet.fields=public_metrics,non_public_metrics,organic_metrics"
-        return self._oauth_request("GET", f"{API_BASE}/tweets/{tweet_id}?{params}")
+        return self._oauth_request("GET", f"{API_BASE}/tweets/{_seg(tweet_id)}?{params}")
 
     # ---- users ----
 
     def get_user(self, username: str) -> dict[str, Any]:
         fields = "user.fields=created_at,description,public_metrics,verified,profile_image_url,url,location,pinned_tweet_id"
-        return self._bearer_get(f"{API_BASE}/users/by/username/{username}?{fields}")
+        return self._bearer_get(f"{API_BASE}/users/by/username/{_seg(username)}?{fields}")
 
     def get_timeline(self, user_id: str, max_results: int = 10) -> dict[str, Any]:
         max_results = max(5, min(max_results, 100))
@@ -265,7 +274,7 @@ class XApiClient:
             "media.fields": "url,preview_image_url,type",
         }
         resp = self._http.get(
-            f"{API_BASE}/users/{user_id}/tweets",
+            f"{API_BASE}/users/{_seg(user_id)}/tweets",
             params=params,
             headers={"Authorization": f"Bearer {self.creds.bearer_token}"},
         )
@@ -278,7 +287,7 @@ class XApiClient:
             "user.fields": "created_at,description,public_metrics,verified,profile_image_url",
         }
         resp = self._http.get(
-            f"{API_BASE}/users/{user_id}/followers",
+            f"{API_BASE}/users/{_seg(user_id)}/followers",
             params=params,
             headers={"Authorization": f"Bearer {self.creds.bearer_token}"},
         )
@@ -291,7 +300,7 @@ class XApiClient:
             "user.fields": "created_at,description,public_metrics,verified,profile_image_url",
         }
         resp = self._http.get(
-            f"{API_BASE}/users/{user_id}/following",
+            f"{API_BASE}/users/{_seg(user_id)}/following",
             params=params,
             headers={"Authorization": f"Bearer {self.creds.bearer_token}"},
         )
@@ -307,18 +316,18 @@ class XApiClient:
             "user.fields": "name,username,verified",
         }
         qs = "&".join(f"{k}={v}" for k, v in params.items())
-        url = f"{API_BASE}/users/{user_id}/mentions?{qs}"
+        url = f"{API_BASE}/users/{_seg(user_id)}/mentions?{qs}"
         return self._oauth_request("GET", url)
 
     # ---- engagement ----
 
     def like_tweet(self, tweet_id: str) -> dict[str, Any]:
         user_id = self.get_authenticated_user_id()
-        return self._oauth_request("POST", f"{API_BASE}/users/{user_id}/likes", {"tweet_id": tweet_id})
+        return self._oauth_request("POST", f"{API_BASE}/users/{_seg(user_id)}/likes", {"tweet_id": tweet_id})
 
     def retweet(self, tweet_id: str) -> dict[str, Any]:
         user_id = self.get_authenticated_user_id()
-        return self._oauth_request("POST", f"{API_BASE}/users/{user_id}/retweets", {"tweet_id": tweet_id})
+        return self._oauth_request("POST", f"{API_BASE}/users/{_seg(user_id)}/retweets", {"tweet_id": tweet_id})
 
     # ---- bookmarks (require OAuth 2.0 User Context) ----
 
@@ -333,16 +342,16 @@ class XApiClient:
             "media.fields": "url,preview_image_url,type",
         }
         qs = "&".join(f"{k}={v}" for k, v in params.items())
-        url = f"{API_BASE}/users/{user_id}/bookmarks?{qs}"
+        url = f"{API_BASE}/users/{_seg(user_id)}/bookmarks?{qs}"
         return self._oauth2_request("GET", url)
 
     def bookmark_tweet(self, tweet_id: str) -> dict[str, Any]:
         user_id = self.get_authenticated_user_id()
-        return self._oauth2_request("POST", f"{API_BASE}/users/{user_id}/bookmarks", {"tweet_id": tweet_id})
+        return self._oauth2_request("POST", f"{API_BASE}/users/{_seg(user_id)}/bookmarks", {"tweet_id": tweet_id})
 
     def unbookmark_tweet(self, tweet_id: str) -> dict[str, Any]:
         user_id = self.get_authenticated_user_id()
-        return self._oauth2_request("DELETE", f"{API_BASE}/users/{user_id}/bookmarks/{tweet_id}")
+        return self._oauth2_request("DELETE", f"{API_BASE}/users/{_seg(user_id)}/bookmarks/{_seg(tweet_id)}")
 
     # ---- likes lookup (requires OAuth 2.0 User Context) ----
 
@@ -364,5 +373,5 @@ class XApiClient:
             "media.fields": "url,preview_image_url,type",
         }
         qs = "&".join(f"{k}={v}" for k, v in params.items())
-        url = f"{API_BASE}/users/{user_id}/liked_tweets?{qs}"
+        url = f"{API_BASE}/users/{_seg(user_id)}/liked_tweets?{qs}"
         return self._oauth2_request("GET", url)
